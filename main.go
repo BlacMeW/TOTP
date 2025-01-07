@@ -1,41 +1,78 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
-	"time"
+	"net/http"
 
 	"github.com/pquerna/otp/totp"
 )
 
-func main() {
-	// 1. TOTP key ကို generate လုပ်ပါ
+// API response structure
+type ApiResponse struct {
+	Message string `json:"message"`
+	Success bool   `json:"success"`
+}
+
+// Generate TOTP key
+func generateTOTP(w http.ResponseWriter, r *http.Request) {
+	// Generate a new TOTP key
 	key, err := totp.Generate(totp.GenerateOpts{
-		Issuer:      "MyApp",           // အသုံးပြုမည့် app name
-		AccountName: "user@domain.com", // သင့် account name
+		Issuer:      "MyApp",
+		AccountName: "user@domain.com",
 	})
 	if err != nil {
-		log.Fatal(err)
+		http.Error(w, "Failed to generate TOTP key", http.StatusInternalServerError)
+		return
 	}
 
-	// 2. Generated TOTP Key ကို print လုပ်ပါ
-	fmt.Println("Key URL:", key.URL())
+	// Respond with key URL
+	response := map[string]string{
+		"key": key.Secret(),
+		"url": key.URL(),
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
+}
 
-	// 3. TOTP token ထုတ်ပါ
-	// 30-seconds interval ဖြစ်တဲ့ OTP ကို generate လုပ်ပါ
-	otp, err := totp.GenerateCode(key.Secret(), time.Now())
+// Validate TOTP code
+func validateTOTP(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		OTP string `json:"otp"`
+	}
+	// Decode the incoming JSON request
+	err := json.NewDecoder(r.Body).Decode(&input)
 	if err != nil {
-		log.Fatal(err)
+		http.Error(w, "Invalid input", http.StatusBadRequest)
+		return
 	}
 
-	// 4. Generated OTP ကို print လုပ်ပါ
-	fmt.Println("Generated OTP:", otp)
+	// Hardcoded secret key (this should be dynamic based on user in production)
+	secret := "JBSWY3DPEHPK3PXP" // You can get this from `/generate` API
 
-	// 5. TOTP Validation (Verification)
-	valid := totp.Validate(otp, key.Secret())
+	// Validate the OTP
+	valid := totp.Validate(input.OTP, secret)
+	var response ApiResponse
+
 	if valid {
-		fmt.Println("OTP is valid!")
+		response = ApiResponse{Message: "OTP is valid!", Success: true}
 	} else {
-		fmt.Println("OTP is invalid!")
+		response = ApiResponse{Message: "Invalid OTP", Success: false}
 	}
+
+	// Send response back
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
+}
+
+func main() {
+	// API routes
+	http.HandleFunc("/generate", generateTOTP)
+	http.HandleFunc("/validate", validateTOTP)
+
+	// Start the server
+	port := ":8000"
+	fmt.Println("Starting server on", port)
+	log.Fatal(http.ListenAndServe(port, nil))
 }
